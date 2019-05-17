@@ -1,23 +1,25 @@
-const mongoService = require('./mongo-service')
-const AFFILIATE_COLLECTION = 'affiliate'
-const MARKETING_COLLECTION = 'marketing'
-const INFLUENCER_COLLECTION = 'influencer'
+const DBService = require('./DBService')
+const TABLES = ['affiliate', 'marketing', 'influencer']
 const axios = require('axios')
 
 function fetchTweets() {
-    let affiliate = _fetchByWordAndUpdateDB(AFFILIATE_COLLECTION)
-    let marketing = _fetchByWordAndUpdateDB(INFLUENCER_COLLECTION)
-    let influencer = _fetchByWordAndUpdateDB(MARKETING_COLLECTION)
-    return Promise.all([affiliate, marketing, influencer]).then(() => 'WORDS_FETCHED')
+    _createNewTablesIfNotExist()
+    let apiRes = TABLES.map(word => _fetchAllWord(word))
+    return Promise.all(apiRes).then(vals => {
+        let sqlRes = vals.map((words, idx) => {
+            return words.data.map(word => _add(word, TABLES[idx]))
+        })
+        return Promise.all(sqlRes)
+    })
 }
 
-async function getTweets() {
-    let db = await mongoService.connect()
-    let affiliate = db.collection(AFFILIATE_COLLECTION).find({}).toArray()
-    let marketing = db.collection(INFLUENCER_COLLECTION).find({}).toArray()
-    let influencer = db.collection(MARKETING_COLLECTION).find({}).toArray()
-    return await Promise.all([affiliate, marketing, influencer])
-    
+function getTweets() {
+    let sqlRes = _getAllWordsFromTable()
+    return Promise.all(sqlRes)
+        .then(vals => {
+            _clearTables()
+            return vals
+        })
 }
 
 module.exports = {
@@ -25,10 +27,38 @@ module.exports = {
     getTweets
 }
 
-async function _fetchByWordAndUpdateDB(word) {
+async function _fetchAllWord(word) {
+
     let res = await axios.get(`https://api.datamuse.com/words?ml=${word}`)
-    let db = await mongoService.connect()
-    db.collection(word).deleteMany({})
-    db.collection(word).insertMany(res.data)
     return res
+}
+
+function _add(word, table) {
+    let query = `INSERT INTO ${table} (word, score, tags) 
+                VALUES ("${word.word}",
+                        "${word.score}",
+                        "${word.tags}")`;
+
+    return DBService.runSQL(query)
+}
+
+function _clearTables() {
+    TABLES.forEach(table => {
+        let query = `TRUNCATE TABLE ${table}`
+        DBService.runSQL(query)
+    })
+}
+
+function _createNewTablesIfNotExist() {
+    return TABLES.forEach(table => {
+        let query = `CREATE TABLE IF NOT EXISTS ${table}(id INTEGER primary key AUTO_INCREMENT, word VARCHAR(255) NOT NULL, score INTEGER NOT NULL, tags VARCHAR(255) NOT NULL)`
+        DBService.runSQL(query)
+    })
+}
+
+function _getAllWordsFromTable() {
+    return TABLES.map(table => {
+        let query = `SELECT * FROM ${table}`
+        return DBService.runSQL(query)
+    })
 }
